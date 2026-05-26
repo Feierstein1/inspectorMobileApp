@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -7,10 +7,13 @@ import {
   StyleSheet,
   Alert,
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { Stack, useLocalSearchParams, router } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
-import * as FileSystem from 'expo-file-system';
+import { cacheDirectory, copyAsync } from 'expo-file-system/legacy';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useJobsStore } from '@/store/jobs';
 import { useSyncStore } from '@/store/sync';
 import { getDb } from '@/lib/db';
@@ -18,6 +21,7 @@ import { drainSyncQueue } from '@/lib/sync';
 import { SchemaItem, SubmissionEntry } from '@/lib/api';
 import FormField from '@/components/FormField';
 import SignatureModal from '@/components/SignatureModal';
+import { useColors } from '@/store/theme';
 
 type FormValues = Record<string, string | number | null>;
 type PhotoMap = Record<string, string[]>;
@@ -27,6 +31,7 @@ function uuid(): string {
 }
 
 export default function FormSubmissionScreen() {
+  const c = useColors();
   const { id: jobId, itemId } = useLocalSearchParams<{ id: string; itemId: string }>();
   const { jobs, markItemSubmitted } = useJobsStore();
   const { isOnline } = useSyncStore();
@@ -34,23 +39,54 @@ export default function FormSubmissionScreen() {
   const job = jobs.find((j) => j.id === jobId);
   const item = job?.items.find((i) => i.id === itemId);
 
-  // Seed form values from existing submission if any
+  const draftKey = `draft_${itemId}`;
+  const draftSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const [values, setValues] = useState<FormValues>(() => {
     if (!item?.submission?.data) return {};
     return Object.fromEntries(item.submission.data.map((e) => [e.itemId, e.value]));
   });
 
-  // Local photo URIs keyed by field id ('' = general/no field)
   const [photos, setPhotos] = useState<PhotoMap>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [sigVisible, setSigVisible] = useState(false);
   const [workerSig, setWorkerSig] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [draftLoaded, setDraftLoaded] = useState(false);
+
+  // Load draft on mount (only if no existing submission)
+  useEffect(() => {
+    if (item?.submission) {
+      setDraftLoaded(true);
+      return;
+    }
+    AsyncStorage.getItem(draftKey).then((stored) => {
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          setValues((prev) => ({ ...parsed, ...prev }));
+        } catch {}
+      }
+      setDraftLoaded(true);
+    });
+  }, [itemId]);
+
+  // Auto-save draft with 500ms debounce
+  useEffect(() => {
+    if (!draftLoaded || item?.submission) return;
+    if (draftSaveTimer.current) clearTimeout(draftSaveTimer.current);
+    draftSaveTimer.current = setTimeout(() => {
+      AsyncStorage.setItem(draftKey, JSON.stringify(values)).catch(() => {});
+    }, 500);
+    return () => {
+      if (draftSaveTimer.current) clearTimeout(draftSaveTimer.current);
+    };
+  }, [values, draftLoaded]);
 
   if (!job || !item) {
     return (
-      <View style={styles.center}>
-        <Text style={styles.notFound}>Form not found.</Text>
+      <View style={[styles.center, { backgroundColor: c.bg }]}>
+        <Text style={[styles.notFound, { color: c.textSecondary }]}>Form not found.</Text>
       </View>
     );
   }
@@ -71,9 +107,8 @@ export default function FormSubmissionScreen() {
     if (result.canceled || !result.assets[0]) return;
 
     const asset = result.assets[0];
-    // Copy to a persistent temp location
-    const dest = `${FileSystem.cacheDirectory}${uuid()}.jpg`;
-    await FileSystem.copyAsync({ from: asset.uri, to: dest });
+    const dest = `${cacheDirectory}${uuid()}.jpg`;
+    await copyAsync({ from: asset.uri, to: dest });
 
     setPhotos((prev) => ({
       ...prev,
@@ -146,13 +181,11 @@ export default function FormSubmissionScreen() {
         value: field.type === 'photo' ? null : (values[field.id] ?? null),
       }));
 
-      // Queue the submission
       await db.runAsync(
         'INSERT INTO submissions_queue (id, job_item_id, data, photos, status, created_at) VALUES (?, ?, ?, ?, ?, ?)',
         [queueId, item.id, JSON.stringify(data), '[]', 'pending', now]
       );
 
-      // Queue all photos
       const allPhotos = Object.entries(photos);
       for (const [fieldId, uris] of allPhotos) {
         for (const uri of uris) {
@@ -163,7 +196,6 @@ export default function FormSubmissionScreen() {
         }
       }
 
-      // Optimistically update the jobs store so the UI reflects completion
       const allFieldPhotos = Object.values(photos).flat();
       markItemSubmitted(job.id, item.id, {
         id: queueId,
@@ -179,13 +211,15 @@ export default function FormSubmissionScreen() {
         })),
       });
 
-      // Attempt immediate sync if online
+      // Clear draft after successful submit
+      await AsyncStorage.removeItem(draftKey);
+
       if (isOnline) {
         drainSyncQueue().catch(() => {});
       }
 
       router.back();
-    } catch (err) {
+    } catch {
       Alert.alert('Error', 'Failed to save form. Please try again.');
     } finally {
       setSubmitting(false);
@@ -195,11 +229,13 @@ export default function FormSubmissionScreen() {
   return (
     <>
       <Stack.Screen options={{ title: item.template.name }} />
-      <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
-
+      <ScrollView
+        style={[styles.scroll, { backgroundColor: c.bg }]}
+        contentContainerStyle={styles.content}
+      >
         {item.submission && (
-          <View style={styles.existingBanner}>
-            <Text style={styles.existingText}>
+          <View style={[styles.existingBanner, { backgroundColor: c.warningBg }]}>
+            <Text style={[styles.existingText, { color: c.warning }]}>
               Previously submitted on{' '}
               {new Date(item.submission.createdAt).toLocaleDateString()}. Submitting again will
               update the record.
@@ -220,30 +256,30 @@ export default function FormSubmissionScreen() {
           />
         ))}
 
-        {/* Worker Signature */}
+        {/* Worker signature */}
         {item.template.requireWorkerSignature && (
-          <View style={styles.sigSection}>
-            <Text style={styles.sigLabel}>Your Signature</Text>
+          <View style={[styles.sigSection, { backgroundColor: c.surface, borderColor: c.border }]}>
+            <Text style={[styles.sigLabel, { color: c.text }]}>Your Signature</Text>
             {workerSig ? (
               <View style={styles.sigDone}>
-                <Text style={styles.sigDoneText}>✓ Signature captured</Text>
+                <Text style={[styles.sigDoneText, { color: c.success }]}>✓ Signature captured</Text>
                 <TouchableOpacity onPress={() => setWorkerSig(null)}>
-                  <Text style={styles.sigRedo}>Redo</Text>
+                  <Text style={[styles.sigRedo, { color: c.primary }]}>Redo</Text>
                 </TouchableOpacity>
               </View>
             ) : (
               <TouchableOpacity
-                style={styles.sigBtn}
+                style={[styles.sigBtn, { borderColor: c.primary }]}
                 onPress={() => setSigVisible(true)}
               >
-                <Text style={styles.sigBtnText}>Add Signature</Text>
+                <Text style={[styles.sigBtnText, { color: c.primary }]}>Add Signature</Text>
               </TouchableOpacity>
             )}
           </View>
         )}
 
         <TouchableOpacity
-          style={[styles.submitBtn, submitting && styles.btnDisabled]}
+          style={[styles.submitBtn, { backgroundColor: c.primary }, submitting && styles.btnDisabled]}
           onPress={handleSubmit}
           disabled={submitting}
           activeOpacity={0.8}
@@ -272,34 +308,27 @@ const styles = StyleSheet.create({
   scroll: { flex: 1 },
   content: { padding: 16, paddingBottom: 48 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  notFound: { color: '#6B7280', fontSize: 16 },
-  existingBanner: {
-    backgroundColor: '#FEF3C7',
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 20,
-  },
-  existingText: { fontSize: 13, color: '#92400E' },
+  notFound: { fontSize: 16 },
+  existingBanner: { borderRadius: 10, padding: 12, marginBottom: 20 },
+  existingText: { fontSize: 13 },
   sigSection: {
     marginBottom: 24,
-    backgroundColor: '#fff',
     borderRadius: 12,
     padding: 16,
+    borderWidth: 1,
   },
-  sigLabel: { fontSize: 14, fontWeight: '600', color: '#374151', marginBottom: 12 },
+  sigLabel: { fontSize: 14, fontWeight: '600', marginBottom: 12 },
   sigDone: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  sigDoneText: { fontSize: 15, color: '#16A34A', fontWeight: '600' },
-  sigRedo: { fontSize: 14, color: '#2563EB' },
+  sigDoneText: { fontSize: 15, fontWeight: '600' },
+  sigRedo: { fontSize: 14 },
   sigBtn: {
     borderWidth: 2,
-    borderColor: '#2563EB',
     borderRadius: 10,
     padding: 14,
     alignItems: 'center',
   },
-  sigBtnText: { color: '#2563EB', fontSize: 15, fontWeight: '600' },
+  sigBtnText: { fontSize: 15, fontWeight: '600' },
   submitBtn: {
-    backgroundColor: '#2563EB',
     borderRadius: 12,
     padding: 18,
     alignItems: 'center',

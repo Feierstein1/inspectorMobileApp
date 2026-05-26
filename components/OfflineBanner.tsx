@@ -12,7 +12,7 @@ export default function OfflineBanner() {
       ? `Offline — ${pendingCount} item${plural} pending sync`
       : 'Offline'
     : isSyncing
-    ? 'Syncing...'
+    ? 'Syncing…'
     : `${pendingCount} item${plural} pending sync`;
 
   return (

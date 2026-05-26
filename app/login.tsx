@@ -12,8 +12,10 @@ import {
 } from 'react-native';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/store/auth';
+import { useColors } from '@/store/theme';
 
 export default function LoginScreen() {
+  const c = useColors();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -28,8 +30,9 @@ export default function LoginScreen() {
     try {
       const { token, user } = await api.login(email.trim(), password);
       await setAuth(token, user);
-    } catch {
-      Alert.alert('Login failed', 'Invalid email or password. Please try again.');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Login failed. Please try again.';
+      Alert.alert('Sign In Failed', message);
     } finally {
       setLoading(false);
     }
@@ -37,17 +40,17 @@ export default function LoginScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={[styles.container, { backgroundColor: c.bg }]}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <View style={styles.card}>
-        <Text style={styles.title}>InspectHive</Text>
-        <Text style={styles.subtitle}>Worker Login</Text>
+      <View style={[styles.card, { backgroundColor: c.surface }]}>
+        <Text style={[styles.title, { color: c.text }]}>InspectHive</Text>
+        <Text style={[styles.subtitle, { color: c.textSecondary }]}>Worker Login</Text>
 
         <TextInput
-          style={styles.input}
+          style={[styles.input, { borderColor: c.border, color: c.text, backgroundColor: c.surface }]}
           placeholder="Email"
-          placeholderTextColor="#9CA3AF"
+          placeholderTextColor={c.textMuted}
           autoCapitalize="none"
           keyboardType="email-address"
           returnKeyType="next"
@@ -55,9 +58,9 @@ export default function LoginScreen() {
           onChangeText={setEmail}
         />
         <TextInput
-          style={styles.input}
+          style={[styles.input, { borderColor: c.border, color: c.text, backgroundColor: c.surface }]}
           placeholder="Password"
-          placeholderTextColor="#9CA3AF"
+          placeholderTextColor={c.textMuted}
           secureTextEntry
           returnKeyType="done"
           onSubmitEditing={handleLogin}
@@ -66,7 +69,7 @@ export default function LoginScreen() {
         />
 
         <TouchableOpacity
-          style={[styles.button, loading && styles.buttonDisabled]}
+          style={[styles.button, { backgroundColor: c.primary }, loading && styles.buttonDisabled]}
           onPress={handleLogin}
           disabled={loading}
           activeOpacity={0.8}
@@ -85,12 +88,10 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
     justifyContent: 'center',
     padding: 24,
   },
   card: {
-    backgroundColor: '#fff',
     borderRadius: 16,
     padding: 28,
     shadowColor: '#000',
@@ -102,27 +103,22 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 28,
     fontWeight: '700',
-    color: '#111827',
     textAlign: 'center',
     marginBottom: 4,
   },
   subtitle: {
     fontSize: 16,
-    color: '#6B7280',
     textAlign: 'center',
     marginBottom: 32,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#D1D5DB',
     borderRadius: 10,
     padding: 14,
     fontSize: 16,
-    color: '#111827',
     marginBottom: 16,
   },
   button: {
-    backgroundColor: '#2563EB',
     borderRadius: 10,
     padding: 16,
     alignItems: 'center',

@@ -8,6 +8,7 @@ import {
   SafeAreaView,
 } from 'react-native';
 import SignatureCanvas from 'react-native-signature-canvas';
+import { useColors } from '@/store/theme';
 
 interface SignatureModalProps {
   visible: boolean;
@@ -22,6 +23,7 @@ export default function SignatureModal({
   onSave,
   onClose,
 }: SignatureModalProps) {
+  const c = useColors();
   const ref = useRef<SignatureCanvas>(null);
 
   function handleOK(signature: string) {
@@ -33,16 +35,23 @@ export default function SignatureModal({
     ref.current?.clearSignature();
   }
 
+  const webStyle = `
+    .m-signature-pad { box-shadow: none; border: none; background: ${c.surface}; }
+    .m-signature-pad--body { border: none; background: ${c.surface}; }
+    .m-signature-pad--footer { display: none; }
+    body, html { margin: 0; padding: 0; height: 100%; background: ${c.surface}; }
+  `;
+
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
+      <SafeAreaView style={[styles.container, { backgroundColor: c.surface }]}>
+        <View style={[styles.header, { borderBottomColor: c.border }]}>
           <TouchableOpacity onPress={onClose}>
-            <Text style={styles.cancel}>Cancel</Text>
+            <Text style={[styles.cancel, { color: c.textSecondary }]}>Cancel</Text>
           </TouchableOpacity>
-          <Text style={styles.title}>{title}</Text>
+          <Text style={[styles.title, { color: c.text }]}>{title}</Text>
           <TouchableOpacity onPress={handleClear}>
-            <Text style={styles.clear}>Clear</Text>
+            <Text style={[styles.clear, { color: c.primary }]}>Clear</Text>
           </TouchableOpacity>
         </View>
 
@@ -60,25 +69,17 @@ export default function SignatureModal({
   );
 }
 
-const webStyle = `
-  .m-signature-pad { box-shadow: none; border: none; }
-  .m-signature-pad--body { border: none; }
-  .m-signature-pad--footer { display: none; }
-  body, html { margin: 0; padding: 0; height: 100%; }
-`;
-
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
+  container: { flex: 1 },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
   },
-  title: { fontSize: 17, fontWeight: '600', color: '#111827' },
-  cancel: { fontSize: 16, color: '#6B7280' },
-  clear: { fontSize: 16, color: '#2563EB' },
+  title: { fontSize: 17, fontWeight: '600' },
+  cancel: { fontSize: 16 },
+  clear: { fontSize: 16 },
   canvas: { flex: 1 },
 });

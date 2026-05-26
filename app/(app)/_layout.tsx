@@ -1,23 +1,22 @@
 import { Stack } from 'expo-router';
-import { View, StyleSheet } from 'react-native';
+import { View } from 'react-native';
 import OfflineBanner from '@/components/OfflineBanner';
+import { useColors } from '@/store/theme';
 
 export default function AppLayout() {
+  const c = useColors();
+
   return (
-    <View style={styles.container}>
+    <View style={{ flex: 1 }}>
       <OfflineBanner />
       <Stack
         screenOptions={{
-          headerStyle: { backgroundColor: '#fff' },
-          headerTintColor: '#111827',
+          headerStyle: { backgroundColor: c.header },
+          headerTintColor: c.text,
           headerTitleStyle: { fontWeight: '600', fontSize: 17 },
-          contentStyle: { backgroundColor: '#F3F4F6' },
+          contentStyle: { backgroundColor: c.bg },
         }}
       />
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1 },
-});

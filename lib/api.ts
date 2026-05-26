@@ -93,6 +93,7 @@ export interface SchemaItem {
     min?: number;
     max?: number;
     maxPhotos?: number;
+    maxLength?: number;
   };
 }
 

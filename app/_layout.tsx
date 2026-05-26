@@ -8,24 +8,27 @@ import { useJobsStore } from '@/store/jobs';
 import { initDb } from '@/lib/db';
 import { drainSyncQueue } from '@/lib/sync';
 import { api } from '@/lib/api';
+import { useThemeStore, useIsDark } from '@/store/theme';
 
 export default function RootLayout() {
   const { loadFromStorage, isLoading, token } = useAuthStore();
   const { setOnline } = useSyncStore();
   const { persistJobs } = useJobsStore();
+  const { loadTheme } = useThemeStore();
+  const isDark = useIsDark();
 
-  // Boot: init SQLite then load token from SecureStore
   useEffect(() => {
-    initDb().then(() => loadFromStorage());
+    initDb().then(() => {
+      loadFromStorage();
+      loadTheme();
+    });
   }, []);
 
-  // When token is available, prefetch jobs
   useEffect(() => {
     if (!token) return;
     api.getJobs().then((jobs) => persistJobs(jobs)).catch(() => {});
   }, [token]);
 
-  // Watch connectivity; drain queue and refresh jobs on reconnect
   useEffect(() => {
     const unsub = NetInfo.addEventListener((state) => {
       const online = !!state.isConnected && state.isInternetReachable !== false;
@@ -38,15 +41,14 @@ export default function RootLayout() {
     return unsub;
   }, [token]);
 
-  // Navigate once auth state is resolved
   useEffect(() => {
     if (isLoading) return;
-    router.replace(token ? '/(app)' : '/login');
+    router.replace(token ? '/(tabs)' : '/login');
   }, [isLoading, token]);
 
   return (
     <>
-      <StatusBar style="dark" />
+      <StatusBar style={isDark ? 'light' : 'dark'} />
       <Stack screenOptions={{ headerShown: false }} />
     </>
   );
