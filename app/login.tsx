@@ -31,7 +31,17 @@ export default function LoginScreen() {
       const { token, user } = await api.login(email.trim(), password);
       await setAuth(token, user);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Login failed. Please try again.';
+      let message = 'Login failed. Please try again.';
+      if (err instanceof Error) {
+        const msg = err.message;
+        if (msg === 'UNAUTHORIZED' || msg.startsWith('HTTP_401')) {
+          message = 'Incorrect email or password.';
+        } else if (msg === 'TIMEOUT') {
+          message = 'Connection timed out. Please check your network and try again.';
+        } else if (msg.startsWith('HTTP_5')) {
+          message = 'Server error. Please try again later.';
+        }
+      }
       Alert.alert('Sign In Failed', message);
     } finally {
       setLoading(false);

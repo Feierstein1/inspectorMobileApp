@@ -1,6 +1,11 @@
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Alert } from 'react-native';
 import { useAuthStore } from '@/store/auth';
 import { useThemeStore, useColors, ThemeMode } from '@/store/theme';
+import { useSyncStore } from '@/store/sync';
+import { useJobsStore } from '@/store/jobs';
+import { drainSyncQueue, resetFailedSubmissions, clearForbiddenSubmissions } from '@/lib/sync';
+import { api } from '@/lib/api';
 
 const MODES: { key: ThemeMode; label: string; icon: string }[] = [
   { key: 'light', label: 'Light', icon: '☀️' },
@@ -12,6 +17,35 @@ export default function SettingsScreen() {
   const c = useColors();
   const { user, clearAuth } = useAuthStore();
   const { mode, setMode } = useThemeStore();
+  const { pendingCount, failedCount, failedPhotoCount, forbiddenCount, isSyncing } = useSyncStore();
+  const { persistJobs, lastSyncAt } = useJobsStore();
+
+  const [syncing, setSyncing] = useState(false);
+
+  async function handleManualSync() {
+    if (syncing || isSyncing) return;
+    setSyncing(true);
+    try {
+      // Reset failed items so they get a fresh attempt
+      await resetFailedSubmissions();
+      await drainSyncQueue();
+      const jobs = await api.getJobs();
+      await persistJobs(jobs);
+      Alert.alert('Sync Complete', 'Your data is up to date.');
+    } catch {
+      Alert.alert(
+        'Sync Failed',
+        'Could not connect to the server. Your data is saved locally and will sync automatically when you are back online.'
+      );
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  const syncBusy = syncing || isSyncing;
+  const lastSyncLabel = lastSyncAt
+    ? new Date(lastSyncAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    : 'Never';
 
   return (
     <View style={[styles.container, { backgroundColor: c.bg }]}>
@@ -36,6 +70,71 @@ export default function SettingsScreen() {
           <Text style={[styles.rowVal, { color: c.text }]} numberOfLines={1}>
             {user?.email ?? '—'}
           </Text>
+        </View>
+      </View>
+
+      {/* Sync section */}
+      <View style={[styles.section, { backgroundColor: c.surface, borderColor: c.border }]}>
+        <Text style={[styles.sectionLabel, { color: c.textMuted }]}>DATA SYNC</Text>
+
+        <View style={[styles.row, { borderBottomColor: c.border }]}>
+          <Text style={[styles.rowKey, { color: c.textSecondary }]}>Last synced</Text>
+          <Text style={[styles.rowVal, { color: c.text }]}>{lastSyncLabel}</Text>
+        </View>
+
+        <View style={[styles.row, { borderBottomColor: c.border }]}>
+          <Text style={[styles.rowKey, { color: c.textSecondary }]}>Pending uploads</Text>
+          <Text
+            style={[
+              styles.rowVal,
+              { color: pendingCount > 0 ? c.warning : c.success },
+            ]}
+          >
+            {pendingCount > 0 ? `${pendingCount} queued` : 'All synced'}
+          </Text>
+        </View>
+
+        {failedCount > 0 && (
+          <View style={[styles.row, { borderBottomColor: c.border }]}>
+            <Text style={[styles.rowKey, { color: c.textSecondary }]}>Failed submissions</Text>
+            <Text style={[styles.rowVal, { color: c.danger }]}>{failedCount} form{failedCount > 1 ? 's' : ''}</Text>
+          </View>
+        )}
+
+        {failedPhotoCount > 0 && (
+          <View style={[styles.row, { borderBottomColor: c.border }]}>
+            <Text style={[styles.rowKey, { color: c.textSecondary }]}>Failed photos</Text>
+            <Text style={[styles.rowVal, { color: c.danger }]}>{failedPhotoCount} photo{failedPhotoCount > 1 ? 's' : ''}</Text>
+          </View>
+        )}
+
+        {forbiddenCount > 0 && (
+          <View style={[styles.row, { borderBottomColor: c.border }]}>
+            <Text style={[styles.rowKey, { color: c.textSecondary }]}>Edit not permitted</Text>
+            <TouchableOpacity onPress={() => clearForbiddenSubmissions()}>
+              <Text style={[styles.rowVal, { color: c.danger }]}>
+                {forbiddenCount} blocked · Clear
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        <View style={[styles.row, { borderBottomWidth: 0 }]}>
+          <TouchableOpacity
+            style={[
+              styles.syncBtn,
+              { backgroundColor: syncBusy ? c.surfaceAlt : c.primary },
+            ]}
+            onPress={handleManualSync}
+            disabled={syncBusy}
+            activeOpacity={0.8}
+          >
+            {syncBusy ? (
+              <ActivityIndicator color={c.textMuted} size="small" />
+            ) : (
+              <Text style={styles.syncBtnText}>Sync Now</Text>
+            )}
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -113,6 +212,15 @@ const styles = StyleSheet.create({
   },
   rowKey: { fontSize: 15, flex: 1 },
   rowVal: { fontSize: 15, flex: 2, textAlign: 'right' },
+  syncBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+    minHeight: 40,
+    justifyContent: 'center',
+  },
+  syncBtnText: { color: '#fff', fontSize: 15, fontWeight: '600' },
   modeContainer: {
     flexDirection: 'row',
     padding: 12,

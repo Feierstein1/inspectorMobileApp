@@ -39,5 +39,23 @@ export async function initDb(): Promise<void> {
       status TEXT NOT NULL DEFAULT 'pending',
       attempts INTEGER NOT NULL DEFAULT 0
     );
+
+    CREATE TABLE IF NOT EXISTS worker_signatures_queue (
+      id TEXT PRIMARY KEY,
+      submission_id TEXT,
+      job_item_id TEXT NOT NULL,
+      image_data TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempts INTEGER NOT NULL DEFAULT 0
+    );
   `);
+
+  // Additive migrations — safe to re-run on every startup
+  try {
+    await db.execAsync(
+      'ALTER TABLE submissions_queue ADD COLUMN is_update INTEGER NOT NULL DEFAULT 0'
+    );
+  } catch {
+    // Column already exists on devices that ran a previous version
+  }
 }

@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { router } from 'expo-router';
 import { useJobsStore } from '@/store/jobs';
-import { useAuthStore } from '@/store/auth';
+import { useSyncStore } from '@/store/sync';
 import { api, Job } from '@/lib/api';
 import { useColors, Colors } from '@/store/theme';
 
@@ -61,7 +61,7 @@ function isThisWeek(dateStr?: string | null): boolean {
 export default function JobsListScreen() {
   const c = useColors();
   const { jobs, persistJobs, isRefreshing, setRefreshing } = useJobsStore();
-  const { clearAuth } = useAuthStore();
+  const { pendingItemIds } = useSyncStore();
 
   const [period, setPeriod] = useState<Period>('today');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -102,8 +102,11 @@ export default function JobsListScreen() {
     try {
       const fresh = await api.getJobs();
       await persistJobs(fresh);
-    } catch {}
-    setRefreshing(false);
+    } catch {
+      // Jobs remain visible from cache; no alert needed — user can try again with another pull
+    } finally {
+      setRefreshing(false);
+    }
   }, []);
 
   const emptyMessage =
@@ -120,9 +123,6 @@ export default function JobsListScreen() {
       {/* Page header */}
       <View style={[styles.header, { backgroundColor: c.bg }]}>
         <Text style={[styles.headerTitle, { color: c.text }]}>My Jobs</Text>
-        <TouchableOpacity onPress={clearAuth}>
-          <Text style={styles.signOut}>Sign Out</Text>
-        </TouchableOpacity>
       </View>
 
       {/* Period filter */}
@@ -213,13 +213,23 @@ export default function JobsListScreen() {
             </TouchableOpacity>
           ) : null
         }
-        renderItem={({ item: job }) => <JobCard job={job} c={c} />}
+        renderItem={({ item: job }) => (
+          <JobCard job={job} c={c} pendingItemIds={pendingItemIds} />
+        )}
       />
     </View>
   );
 }
 
-function JobCard({ job, c }: { job: Job; c: Colors }) {
+function JobCard({
+  job,
+  c,
+  pendingItemIds,
+}: {
+  job: Job;
+  c: Colors;
+  pendingItemIds: string[];
+}) {
   const total = job.items.length;
   const done = job.items.filter((i) => i.status === 'COMPLETED').length;
   const todayJob = isToday(job.scheduledAt);
@@ -308,6 +318,7 @@ function JobCard({ job, c }: { job: Job; c: Colors }) {
         const isLast = idx === job.items.length - 1;
         const itemDone = item.status === 'COMPLETED';
         const result = item.submission?.result;
+        const isPendingSync = pendingItemIds.includes(item.id);
 
         return (
           <TouchableOpacity
@@ -336,18 +347,25 @@ function JobCard({ job, c }: { job: Job; c: Colors }) {
               </View>
             </View>
             <View style={styles.itemRight}>
-              <View
-                style={[
-                  styles.itemStatusBadge,
-                  { backgroundColor: itemDone ? c.successBg : c.warningBg },
-                ]}
-              >
-                <Text
-                  style={[styles.itemStatusText, { color: itemDone ? c.success : c.warning }]}
+              {isPendingSync && (
+                <View style={[styles.itemStatusBadge, { backgroundColor: c.warningBg }]}>
+                  <Text style={[styles.itemStatusText, { color: c.warning }]}>PENDING SYNC</Text>
+                </View>
+              )}
+              {!isPendingSync && (
+                <View
+                  style={[
+                    styles.itemStatusBadge,
+                    { backgroundColor: itemDone ? c.successBg : c.warningBg },
+                  ]}
                 >
-                  {item.status}
-                </Text>
-              </View>
+                  <Text
+                    style={[styles.itemStatusText, { color: itemDone ? c.success : c.warning }]}
+                  >
+                    {item.status.replace('_', ' ')}
+                  </Text>
+                </View>
+              )}
               {result && (
                 <View
                   style={[
@@ -384,7 +402,6 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
   },
   headerTitle: { fontSize: 28, fontWeight: '700' },
-  signOut: { color: '#DC2626', fontSize: 15 },
   segRow: { flexDirection: 'row', borderRadius: 10, padding: 4, gap: 2 },
   segBtn: { flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center' },
   segBtnText: { fontSize: 13, fontWeight: '600' },

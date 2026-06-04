@@ -62,6 +62,7 @@ export default function FormField({
             textAlignVertical="top"
             placeholderTextColor={c.textMuted}
             placeholder="Enter text…"
+            maxLength={field.options?.maxLength}
           />
           {typeof value === 'string' && value.length > 0 && (
             <Text style={[styles.charCount, { color: c.textMuted }]}>

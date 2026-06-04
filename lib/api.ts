@@ -2,6 +2,9 @@ import * as SecureStore from 'expo-secure-store';
 
 const BASE_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000').replace(/\/$/, '');
 
+const REQUEST_TIMEOUT_MS = 15_000;
+const UPLOAD_TIMEOUT_MS = 60_000;
+
 async function getToken(): Promise<string | null> {
   return SecureStore.getItemAsync('auth_token');
 }
@@ -14,17 +17,34 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   };
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
-  const res = await fetch(`${BASE_URL}${path}`, { ...options, headers });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-  if (res.status === 401) {
-    await SecureStore.deleteItemAsync('auth_token');
-    throw new Error('UNAUTHORIZED');
-  }
-  if (!res.ok) {
+  try {
+    const res = await fetch(`${BASE_URL}${path}`, { ...options, headers, signal: controller.signal });
+
+    if (res.status === 401) {
+      await SecureStore.deleteItemAsync('auth_token');
+      throw new Error('UNAUTHORIZED');
+    }
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`HTTP_${res.status}:${text}`);
+    }
     const text = await res.text().catch(() => '');
-    throw new Error(`HTTP_${res.status}:${text}`);
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      throw new Error(`HTTP_PARSE:Invalid server response`);
+    }
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('TIMEOUT');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
-  return res.json() as Promise<T>;
 }
 
 export const api = {
@@ -55,14 +75,41 @@ export const api = {
     formData.append('photo', { uri: localUri, name: filename, type: 'image/jpeg' } as unknown as Blob);
     if (fieldId) formData.append('fieldId', fieldId);
 
-    const res = await fetch(`${BASE_URL}/api/mobile/items/${jobItemId}/photos`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token ?? ''}` },
-      body: formData,
-    });
-    if (!res.ok) throw new Error(`HTTP_${res.status}`);
-    return res.json() as Promise<{ id: string; url: string }>;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
+
+    try {
+      const res = await fetch(`${BASE_URL}/api/mobile/items/${jobItemId}/photos`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token ?? ''}` },
+        body: formData,
+        signal: controller.signal,
+      });
+
+      if (res.status === 401) {
+        await SecureStore.deleteItemAsync('auth_token');
+        throw new Error('UNAUTHORIZED');
+      }
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`HTTP_${res.status}:${text}`);
+      }
+      return res.json() as Promise<{ id: string; url: string }>;
+    } catch (err: unknown) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw new Error('TIMEOUT');
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeoutId);
+    }
   },
+
+  uploadWorkerSignature: (jobItemId: string, imageData: string) =>
+    request<{ url: string }>(`/api/mobile/items/${jobItemId}/worker-signature`, {
+      method: 'POST',
+      body: JSON.stringify({ imageData }),
+    }),
 
   uploadClientSignature: (jobId: string, imageData: string) =>
     request<{ url: string }>(`/api/mobile/jobs/${jobId}/client-signature`, {
@@ -80,6 +127,7 @@ export interface User {
   lastName: string;
   role: string;
   accountId: string;
+  canEditSubmissions: boolean;
 }
 
 export interface SchemaItem {

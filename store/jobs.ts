@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { Job, JobItem, Submission } from '@/lib/api';
 import { getDb } from '@/lib/db';
+import { getPendingCount, getPendingItemIds } from '@/lib/sync';
+import { useSyncStore } from '@/store/sync';
 
 interface JobsState {
   jobs: Job[];
@@ -22,13 +24,16 @@ export const useJobsStore = create<JobsState>((set, get) => ({
   persistJobs: async (jobs) => {
     const db = getDb();
     const now = Date.now();
-    await db.runAsync('DELETE FROM jobs');
-    for (const job of jobs) {
-      await db.runAsync(
-        'INSERT OR REPLACE INTO jobs (id, data, synced_at) VALUES (?, ?, ?)',
-        [job.id, JSON.stringify(job), now]
-      );
-    }
+    // Atomic replace: if any insert fails the DELETE is rolled back too
+    await db.withTransactionAsync(async () => {
+      await db.runAsync('DELETE FROM jobs');
+      for (const job of jobs) {
+        await db.runAsync(
+          'INSERT OR REPLACE INTO jobs (id, data, synced_at) VALUES (?, ?, ?)',
+          [job.id, JSON.stringify(job), now]
+        );
+      }
+    });
     set({ jobs, lastSyncAt: now });
   },
 
@@ -38,9 +43,19 @@ export const useJobsStore = create<JobsState>((set, get) => ({
       'SELECT * FROM jobs'
     );
     if (rows.length > 0) {
-      const jobs = rows.map((r) => JSON.parse(r.data) as Job);
-      const lastSyncAt = Math.max(...rows.map((r) => r.synced_at));
-      set({ jobs, lastSyncAt });
+      const jobs: Job[] = [];
+      let lastSyncAt = 0;
+      for (const r of rows) {
+        try {
+          jobs.push(JSON.parse(r.data) as Job);
+          if (r.synced_at > lastSyncAt) lastSyncAt = r.synced_at;
+        } catch {
+          // Skip any row whose JSON is corrupted rather than crashing the entire load
+        }
+      }
+      if (jobs.length > 0) {
+        set({ jobs, lastSyncAt });
+      }
     }
   },
 
@@ -56,15 +71,22 @@ export const useJobsStore = create<JobsState>((set, get) => ({
       };
     });
     set({ jobs: updatedJobs });
-    // Persist the optimistic update
     const db = getDb();
     const now = Date.now();
-    updatedJobs.forEach((job) => {
-      db.runAsync('INSERT OR REPLACE INTO jobs (id, data, synced_at) VALUES (?, ?, ?)', [
-        job.id,
-        JSON.stringify(job),
-        now,
-      ]);
-    });
+    Promise.all(
+      updatedJobs.map((job) =>
+        db.runAsync('INSERT OR REPLACE INTO jobs (id, data, synced_at) VALUES (?, ?, ?)', [
+          job.id,
+          JSON.stringify(job),
+          now,
+        ])
+      )
+    ).catch(() => {});
+    Promise.all([getPendingCount(), getPendingItemIds()])
+      .then(([count, ids]) => {
+        useSyncStore.getState().setPendingCount(count);
+        useSyncStore.getState().setPendingItemIds(ids);
+      })
+      .catch(() => {});
   },
 }));
