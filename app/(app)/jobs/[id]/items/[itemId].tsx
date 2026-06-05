@@ -68,7 +68,14 @@ export default function FormSubmissionScreen() {
       if (stored) {
         try {
           const parsed = JSON.parse(stored);
-          setValues((prev) => ({ ...parsed, ...prev }));
+          if (parsed && 'values' in parsed) {
+            // New format: { values, photos }
+            setValues((prev) => ({ ...(parsed.values ?? {}), ...prev }));
+            if (parsed.photos) setPhotos(parsed.photos);
+          } else {
+            // Legacy format: plain values object
+            setValues((prev) => ({ ...parsed, ...prev }));
+          }
         } catch {}
       }
       setDraftLoaded(true);
@@ -79,12 +86,12 @@ export default function FormSubmissionScreen() {
     if (!draftLoaded || item?.submission) return;
     if (draftSaveTimer.current) clearTimeout(draftSaveTimer.current);
     draftSaveTimer.current = setTimeout(() => {
-      AsyncStorage.setItem(draftKey, JSON.stringify(values)).catch(() => {});
+      AsyncStorage.setItem(draftKey, JSON.stringify({ values, photos })).catch(() => {});
     }, 500);
     return () => {
       if (draftSaveTimer.current) clearTimeout(draftSaveTimer.current);
     };
-  }, [values, draftLoaded]);
+  }, [values, photos, draftLoaded]);
 
   if (!job || !item) {
     return (
@@ -102,36 +109,60 @@ export default function FormSubmissionScreen() {
     if (errors[fieldId]) setErrors((prev) => ({ ...prev, [fieldId]: '' }));
   }
 
-  async function pickPhoto(fieldId: string) {
+  function pickPhoto(fieldId: string) {
+    Alert.alert('Add Photo', 'Choose a source', [
+      { text: 'Camera', onPress: () => captureFromCamera(fieldId) },
+      { text: 'Photo Library', onPress: () => pickFromLibrary(fieldId) },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }
+
+  async function captureFromCamera(fieldId: string) {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert(
-        'Camera Access Required',
-        'Please allow camera access in your device settings to add photos.'
-      );
+      Alert.alert('Camera Access Required', 'Please allow camera access in your device settings.');
       return;
     }
-
     try {
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         quality: 0.8,
         allowsEditing: false,
       });
-      if (result.canceled || !result.assets[0]) return;
-
-      const asset = result.assets[0];
-      const dest = `${cacheDirectory}${uuid()}.jpg`;
-      await copyAsync({ from: asset.uri, to: dest });
-
-      setPhotos((prev) => ({
-        ...prev,
-        [fieldId]: [...(prev[fieldId] ?? []), dest],
-      }));
-      if (errors[fieldId]) setErrors((prev) => ({ ...prev, [fieldId]: '' }));
+      await savePickedPhoto(fieldId, result);
     } catch {
-      Alert.alert('Photo Error', 'Failed to capture or save the photo. Please try again.');
+      Alert.alert('Photo Error', 'Failed to capture photo. Please try again.');
     }
+  }
+
+  async function pickFromLibrary(fieldId: string) {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Library Access Required', 'Please allow photo library access in your device settings.');
+      return;
+    }
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.8,
+        allowsEditing: false,
+      });
+      await savePickedPhoto(fieldId, result);
+    } catch {
+      Alert.alert('Photo Error', 'Failed to load photo. Please try again.');
+    }
+  }
+
+  async function savePickedPhoto(fieldId: string, result: ImagePicker.ImagePickerResult) {
+    if (result.canceled || !result.assets[0]) return;
+    const asset = result.assets[0];
+    const dest = `${cacheDirectory}${uuid()}.jpg`;
+    await copyAsync({ from: asset.uri, to: dest });
+    setPhotos((prev) => ({
+      ...prev,
+      [fieldId]: [...(prev[fieldId] ?? []), dest],
+    }));
+    if (errors[fieldId]) setErrors((prev) => ({ ...prev, [fieldId]: '' }));
   }
 
   function removePhoto(fieldId: string, uri: string) {
@@ -357,7 +388,16 @@ export default function FormSubmissionScreen() {
                   ) : (
                     <TouchableOpacity
                       style={[styles.sigBtn, { borderColor: c.primary }]}
-                      onPress={() => setSigVisible(true)}
+                      onPress={() => {
+                        if (!validateFields()) {
+                          Alert.alert(
+                            'Complete Required Fields',
+                            'Please fill in all required fields before adding your signature.'
+                          );
+                          return;
+                        }
+                        setSigVisible(true);
+                      }}
                     >
                       <Text style={[styles.sigBtnText, { color: c.primary }]}>Add Signature</Text>
                     </TouchableOpacity>
@@ -479,6 +519,17 @@ function SubmissionViewMode({
         );
       })}
 
+      {submission.workerSignatureUrl && (
+        <View style={[viewStyles.card, { backgroundColor: c.surface, borderColor: c.border }]}>
+          <Text style={[viewStyles.label, { color: c.textSecondary }]}>Your Signature</Text>
+          <Image
+            source={{ uri: submission.workerSignatureUrl }}
+            style={viewStyles.sigPreview}
+            resizeMode="contain"
+          />
+        </View>
+      )}
+
       {canEdit ? (
         <TouchableOpacity
           style={[viewStyles.editBtn, { borderColor: c.primary }]}
@@ -558,4 +609,13 @@ const viewStyles = StyleSheet.create({
   },
   editBtnText: { fontSize: 16, fontWeight: '600' },
   noEditText: { fontSize: 13, textAlign: 'center', marginTop: 12, fontStyle: 'italic' },
+  sigPreview: {
+    width: '100%',
+    height: 120,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    marginTop: 6,
+  },
 });

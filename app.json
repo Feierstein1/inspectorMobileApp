@@ -29,7 +29,14 @@
     "plugins": [
       "expo-router",
       "expo-sqlite",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "InspectHive needs access to your photo library to attach photos to form submissions.",
+          "cameraPermission": "InspectHive needs camera access to take photos for form submissions."
+        }
+      ]
     ]
   }
 }

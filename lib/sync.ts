@@ -112,14 +112,32 @@ export async function drainSyncQueue(): Promise<void> {
     for (const row of pendingSubmissions) {
       try {
         const data: SubmissionEntry[] = JSON.parse(row.data);
-        const result = row.is_update
-          ? await api.updateSubmission(row.job_item_id, data)
-          : await api.submitForm(row.job_item_id, data);
+        let result: { id: string; result: string | null };
+
+        if (row.is_update) {
+          result = await api.updateSubmission(row.job_item_id, data);
+        } else {
+          try {
+            result = await api.submitForm(row.job_item_id, data);
+          } catch (postErr: unknown) {
+            const msg = postErr instanceof Error ? postErr.message : '';
+            if (msg.startsWith('HTTP_409')) {
+              // Server already has a submission for this item — treat as an update
+              await db.runAsync(
+                'UPDATE submissions_queue SET is_update = 1 WHERE id = ?',
+                [row.id]
+              );
+              result = await api.updateSubmission(row.job_item_id, data);
+            } else {
+              throw postErr;
+            }
+          }
+        }
+
         await db.runAsync(
           "UPDATE submissions_queue SET status = 'synced' WHERE id = ?",
           [row.id]
         );
-        // Unlock photos and worker signature — they need the submission to exist on the server first
         await db.runAsync(
           "UPDATE photos_queue SET submission_id = ? WHERE job_item_id = ? AND status = 'pending'",
           [result.id, row.job_item_id]
@@ -132,7 +150,6 @@ export async function drainSyncQueue(): Promise<void> {
         const msg = err instanceof Error ? err.message : '';
         const is403 = msg.startsWith('HTTP_403');
         const fatal = is403 || isFatalSyncError(err);
-        // 403 = server rejected for permissions — don't retry, use distinct status
         const newStatus = is403 ? 'forbidden' : fatal ? 'failed' : 'pending';
         await db.runAsync(
           "UPDATE submissions_queue SET attempts = attempts + 1, status = ? WHERE id = ?",

@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Alert,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import { Stack, useLocalSearchParams, router } from 'expo-router';
 import { useJobsStore } from '@/store/jobs';
@@ -29,6 +30,7 @@ export default function JobDetailScreen() {
 
   const [sigModalVisible, setSigModalVisible] = useState(false);
   const [sigLoading, setSigLoading] = useState(false);
+  const [localSig, setLocalSig] = useState<string | null>(null);
 
   if (!job) {
     return (
@@ -40,12 +42,13 @@ export default function JobDetailScreen() {
 
   async function handleClientSignature(imageData: string) {
     if (!job) return;
+    setLocalSig(imageData); // Show preview immediately
     setSigLoading(true);
     try {
       await api.uploadClientSignature(job.id, imageData);
-      Alert.alert('Signature saved', 'The client signature has been recorded.');
     } catch {
       Alert.alert('Error', 'Failed to save signature. Please try again.');
+      setLocalSig(null); // Revert preview on failure
     } finally {
       setSigLoading(false);
     }
@@ -102,15 +105,35 @@ export default function JobDetailScreen() {
         {job.requireClientSignature && (
           <View style={[styles.card, { backgroundColor: c.surface, borderColor: c.border }]}>
             <Text style={[styles.sectionTitle, { color: c.text }]}>Client Signature</Text>
-            {job.clientSignatureUrl ? (
-              <View style={styles.signedRow}>
-                <Text style={[styles.signedText, { color: c.success }]}>✓ Signed</Text>
-                {job.clientReviewedAt && (
-                  <Text style={[styles.signedDate, { color: c.textSecondary }]}>
-                    {new Date(job.clientReviewedAt).toLocaleDateString()}
-                  </Text>
-                )}
-              </View>
+
+            {localSig || job.clientSignatureUrl ? (
+              <>
+                <Image
+                  source={{ uri: localSig ?? job.clientSignatureUrl! }}
+                  style={styles.sigPreview}
+                  resizeMode="contain"
+                />
+                <View style={styles.sigCapturedRow}>
+                  <View style={styles.sigCapturedLeft}>
+                    {sigLoading ? (
+                      <ActivityIndicator size="small" color={c.primary} />
+                    ) : (
+                      <Text style={[styles.signedText, { color: c.success }]}>✓ Signature captured</Text>
+                    )}
+                    {job.clientReviewedAt && (
+                      <Text style={[styles.signedDate, { color: c.textSecondary }]}>
+                        {new Date(job.clientReviewedAt).toLocaleDateString()}
+                      </Text>
+                    )}
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => setSigModalVisible(true)}
+                    disabled={sigLoading}
+                  >
+                    <Text style={[styles.redoText, { color: c.primary }]}>Redo</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
             ) : (
               <TouchableOpacity
                 style={[styles.sigBtn, { backgroundColor: c.primary }, sigLoading && styles.btnDisabled]}
@@ -212,7 +235,23 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 16, fontWeight: '600', marginBottom: 12 },
   signedRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   signedText: { fontSize: 15, fontWeight: '600' },
-  signedDate: { fontSize: 13 },
+  signedDate: { fontSize: 13, marginTop: 2 },
+  sigPreview: {
+    width: '100%',
+    height: 130,
+    borderRadius: 8,
+    backgroundColor: '#fff',
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
+  sigCapturedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  sigCapturedLeft: { flex: 1 },
+  redoText: { fontSize: 15, fontWeight: '600', paddingLeft: 12 },
   sigBtn: { borderRadius: 10, padding: 14, alignItems: 'center' },
   sigBtnText: { color: '#fff', fontSize: 15, fontWeight: '600' },
   btnDisabled: { opacity: 0.6 },
