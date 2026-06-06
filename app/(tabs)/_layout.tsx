@@ -2,7 +2,7 @@ import { Tabs } from 'expo-router';
 import { View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useColors } from '@/store/theme';
-import OfflineBanner from '@/components/OfflineBanner';
+import SyncStatusBar from '@/components/SyncStatusBar';
 
 type IoniconsName = React.ComponentProps<typeof Ionicons>['name'];
 
@@ -15,7 +15,7 @@ export default function TabsLayout() {
 
   return (
     <View style={{ flex: 1, backgroundColor: c.bg }}>
-      <OfflineBanner />
+      <SyncStatusBar />
       <Tabs
         screenOptions={{
           headerShown: false,

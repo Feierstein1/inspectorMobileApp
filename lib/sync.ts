@@ -107,15 +107,17 @@ export async function drainSyncQueue(): Promise<void> {
       data: string;
       attempts: number;
       is_update: number;
+      photo_deletes: string;
     }>("SELECT * FROM submissions_queue WHERE status = 'pending' AND attempts < 3");
 
     for (const row of pendingSubmissions) {
       try {
         const data: SubmissionEntry[] = JSON.parse(row.data);
+        const deletedPhotoIds: string[] = JSON.parse(row.photo_deletes || '[]');
         let result: { id: string; result: string | null };
 
         if (row.is_update) {
-          result = await api.updateSubmission(row.job_item_id, data);
+          result = await api.updateSubmission(row.job_item_id, data, deletedPhotoIds);
         } else {
           try {
             result = await api.submitForm(row.job_item_id, data);

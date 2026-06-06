@@ -1,4 +1,5 @@
 import * as SecureStore from 'expo-secure-store';
+import { useAccountStore } from '@/store/account';
 
 const BASE_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:3000').replace(/\/$/, '');
 
@@ -29,6 +30,16 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     }
     if (!res.ok) {
       const text = await res.text().catch(() => '');
+      // Account-level blocks — forced sign-out, not a retryable error
+      if (res.status === 402 || res.status === 403) {
+        let code: string | undefined;
+        try { code = (JSON.parse(text) as { code?: string }).code; } catch {}
+        if (code === 'SUBSCRIPTION_EXPIRED' || code === 'ACCOUNT_FROZEN') {
+          await SecureStore.deleteItemAsync('auth_token');
+          useAccountStore.getState().setBlockReason(code as 'SUBSCRIPTION_EXPIRED' | 'ACCOUNT_FROZEN');
+          throw new Error(code);
+        }
+      }
       throw new Error(`HTTP_${res.status}:${text}`);
     }
     const text = await res.text().catch(() => '');
@@ -56,16 +67,18 @@ export const api = {
 
   getJobs: () => request<Job[]>('/api/mobile/jobs'),
 
+  getProfile: () => request<User>('/api/mobile/profile'),
+
   submitForm: (jobItemId: string, data: SubmissionEntry[]) =>
     request<{ id: string; result: string | null }>(`/api/mobile/items/${jobItemId}/submit`, {
       method: 'POST',
       body: JSON.stringify({ data }),
     }),
 
-  updateSubmission: (jobItemId: string, data: SubmissionEntry[]) =>
+  updateSubmission: (jobItemId: string, data: SubmissionEntry[], deletedPhotoIds?: string[]) =>
     request<{ id: string; result: string | null }>(`/api/mobile/items/${jobItemId}/submit`, {
       method: 'PATCH',
-      body: JSON.stringify({ data }),
+      body: JSON.stringify({ data, ...(deletedPhotoIds?.length ? { deletedPhotoIds } : {}) }),
     }),
 
   uploadPhoto: async (jobItemId: string, localUri: string, fieldId?: string) => {

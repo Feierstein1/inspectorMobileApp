@@ -233,6 +233,10 @@ function JobCard({
   const total = job.items.length;
   const done = job.items.filter((i) => i.status === 'COMPLETED').length;
   const todayJob = isToday(job.scheduledAt);
+  const needsClientSig =
+    job.requireClientSignature &&
+    job.status === 'COMPLETED' &&
+    !job.clientSignatureUrl;
 
   const jobBg: Record<string, string> = {
     PENDING: c.warningBg,
@@ -270,6 +274,11 @@ function JobCard({
             {todayJob && (
               <View style={[styles.todayBadge, { backgroundColor: c.primaryBg }]}>
                 <Text style={[styles.todayBadgeText, { color: c.primary }]}>Today</Text>
+              </View>
+            )}
+            {needsClientSig && (
+              <View style={[styles.statusBadge, { backgroundColor: c.warningBg }]}>
+                <Text style={[styles.statusBadgeText, { color: c.warning }]}>Awaiting Signature</Text>
               </View>
             )}
             <View style={[styles.statusBadge, { backgroundColor: jobBg[job.status] ?? c.warningBg }]}>

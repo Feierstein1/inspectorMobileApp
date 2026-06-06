@@ -1,5 +1,12 @@
 import { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Alert } from 'react-native';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  ActivityIndicator,
+  ScrollView,
+} from 'react-native';
 import { useAuthStore } from '@/store/auth';
 import { useThemeStore, useColors, ThemeMode } from '@/store/theme';
 import { useSyncStore } from '@/store/sync';
@@ -10,12 +17,11 @@ import { api } from '@/lib/api';
 const MODES: { key: ThemeMode; label: string; icon: string }[] = [
   { key: 'light', label: 'Light', icon: '☀️' },
   { key: 'dark', label: 'Dark', icon: '🌙' },
-  { key: 'system', label: 'System', icon: '⚙️' },
 ];
 
 export default function SettingsScreen() {
   const c = useColors();
-  const { user, clearAuth } = useAuthStore();
+  const { user, clearAuth, refreshUser } = useAuthStore();
   const { mode, setMode } = useThemeStore();
   const { pendingCount, failedCount, failedPhotoCount, forbiddenCount, isSyncing } = useSyncStore();
   const { persistJobs, lastSyncAt } = useJobsStore();
@@ -26,17 +32,15 @@ export default function SettingsScreen() {
     if (syncing || isSyncing) return;
     setSyncing(true);
     try {
-      // Reset failed items so they get a fresh attempt
       await resetFailedSubmissions();
       await drainSyncQueue();
-      const jobs = await api.getJobs();
+      const [jobs] = await Promise.all([
+        api.getJobs(),
+        refreshUser().catch(() => {}),
+      ]);
       await persistJobs(jobs);
-      Alert.alert('Sync Complete', 'Your data is up to date.');
     } catch {
-      Alert.alert(
-        'Sync Failed',
-        'Could not connect to the server. Your data is saved locally and will sync automatically when you are back online.'
-      );
+      // Status bar reflects the result — no popup needed
     } finally {
       setSyncing(false);
     }
@@ -48,7 +52,10 @@ export default function SettingsScreen() {
     : 'Never';
 
   return (
-    <View style={[styles.container, { backgroundColor: c.bg }]}>
+    <ScrollView
+      style={[styles.container, { backgroundColor: c.bg }]}
+      contentContainerStyle={styles.scrollContent}
+    >
       {/* Page header */}
       <View style={[styles.header, { backgroundColor: c.bg }]}>
         <Text style={[styles.title, { color: c.text }]}>Settings</Text>
@@ -65,11 +72,16 @@ export default function SettingsScreen() {
           </Text>
         </View>
 
-        <View style={[styles.row, { borderBottomWidth: 0 }]}>
+        <View style={[styles.row, { borderBottomColor: c.border }]}>
           <Text style={[styles.rowKey, { color: c.textSecondary }]}>Email</Text>
           <Text style={[styles.rowVal, { color: c.text }]} numberOfLines={1}>
             {user?.email ?? '—'}
           </Text>
+        </View>
+
+        <View style={[styles.row, { borderBottomWidth: 0 }]}>
+          <Text style={[styles.rowKey, { color: c.textSecondary }]}>Role</Text>
+          <Text style={[styles.rowVal, { color: c.text }]}>{user?.role ?? '—'}</Text>
         </View>
       </View>
 
@@ -84,12 +96,7 @@ export default function SettingsScreen() {
 
         <View style={[styles.row, { borderBottomColor: c.border }]}>
           <Text style={[styles.rowKey, { color: c.textSecondary }]}>Pending uploads</Text>
-          <Text
-            style={[
-              styles.rowVal,
-              { color: pendingCount > 0 ? c.warning : c.success },
-            ]}
-          >
+          <Text style={[styles.rowVal, { color: pendingCount > 0 ? c.warning : c.success }]}>
             {pendingCount > 0 ? `${pendingCount} queued` : 'All synced'}
           </Text>
         </View>
@@ -97,14 +104,18 @@ export default function SettingsScreen() {
         {failedCount > 0 && (
           <View style={[styles.row, { borderBottomColor: c.border }]}>
             <Text style={[styles.rowKey, { color: c.textSecondary }]}>Failed submissions</Text>
-            <Text style={[styles.rowVal, { color: c.danger }]}>{failedCount} form{failedCount > 1 ? 's' : ''}</Text>
+            <Text style={[styles.rowVal, { color: c.danger }]}>
+              {failedCount} form{failedCount > 1 ? 's' : ''}
+            </Text>
           </View>
         )}
 
         {failedPhotoCount > 0 && (
           <View style={[styles.row, { borderBottomColor: c.border }]}>
             <Text style={[styles.rowKey, { color: c.textSecondary }]}>Failed photos</Text>
-            <Text style={[styles.rowVal, { color: c.danger }]}>{failedPhotoCount} photo{failedPhotoCount > 1 ? 's' : ''}</Text>
+            <Text style={[styles.rowVal, { color: c.danger }]}>
+              {failedPhotoCount} photo{failedPhotoCount > 1 ? 's' : ''}
+            </Text>
           </View>
         )}
 
@@ -121,10 +132,7 @@ export default function SettingsScreen() {
 
         <View style={[styles.row, { borderBottomWidth: 0 }]}>
           <TouchableOpacity
-            style={[
-              styles.syncBtn,
-              { backgroundColor: syncBusy ? c.surfaceAlt : c.primary },
-            ]}
+            style={[styles.syncBtn, { backgroundColor: syncBusy ? c.surfaceAlt : c.primary }]}
             onPress={handleManualSync}
             disabled={syncBusy}
             activeOpacity={0.8}
@@ -175,12 +183,13 @@ export default function SettingsScreen() {
       >
         <Text style={[styles.signOutText, { color: c.danger }]}>Sign Out</Text>
       </TouchableOpacity>
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  scrollContent: { paddingBottom: 80 },
   header: {
     paddingHorizontal: 20,
     paddingTop: 56,
@@ -221,11 +230,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   syncBtnText: { color: '#fff', fontSize: 15, fontWeight: '600' },
-  modeContainer: {
-    flexDirection: 'row',
-    padding: 12,
-    gap: 8,
-  },
+  modeContainer: { flexDirection: 'row', padding: 12, gap: 8 },
   modeBtn: {
     flex: 1,
     paddingVertical: 12,

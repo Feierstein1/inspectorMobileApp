@@ -17,7 +17,6 @@ import { cacheDirectory, copyAsync } from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useJobsStore } from '@/store/jobs';
 import { useSyncStore } from '@/store/sync';
-import { useAuthStore } from '@/store/auth';
 import { getDb } from '@/lib/db';
 import { drainSyncQueue } from '@/lib/sync';
 import { SchemaItem, Submission, SubmissionEntry } from '@/lib/api';
@@ -36,8 +35,6 @@ export default function FormSubmissionScreen() {
   const c = useColors();
   const { id: jobId, itemId } = useLocalSearchParams<{ id: string; itemId: string }>();
   const { jobs, markItemSubmitted } = useJobsStore();
-  const { user } = useAuthStore();
-  const canEdit = user?.canEditSubmissions ?? false;
   const { isOnline } = useSyncStore();
 
   const job = jobs.find((j) => j.id === jobId);
@@ -53,6 +50,7 @@ export default function FormSubmissionScreen() {
   });
 
   const [photos, setPhotos] = useState<PhotoMap>({});
+  const [removedPhotoIds, setRemovedPhotoIds] = useState<string[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [sigVisible, setSigVisible] = useState(false);
   const [workerSig, setWorkerSig] = useState<string | null>(null);
@@ -170,6 +168,13 @@ export default function FormSubmissionScreen() {
       ...prev,
       [fieldId]: (prev[fieldId] ?? []).filter((u) => u !== uri),
     }));
+    // If editing and the removed photo is already on the server, mark it for deletion
+    if (editMode && (uri.startsWith('http://') || uri.startsWith('https://'))) {
+      const serverPhoto = item?.submission?.photos.find((p) => p.url === uri);
+      if (serverPhoto) {
+        setRemovedPhotoIds((prev) => [...prev, serverPhoto.id]);
+      }
+    }
   }
 
   function validateFields(): boolean {
@@ -263,12 +268,15 @@ export default function FormSubmissionScreen() {
       // If any INSERT fails, none of them commit — no orphaned partial state.
       await db.withTransactionAsync(async () => {
         await db.runAsync(
-          'INSERT INTO submissions_queue (id, job_item_id, data, photos, status, created_at, is_update) VALUES (?, ?, ?, ?, ?, ?, ?)',
-          [queueId, item!.id, JSON.stringify(data), '[]', 'pending', now, editMode && !!item!.submission ? 1 : 0]
+          'INSERT INTO submissions_queue (id, job_item_id, data, photos, status, created_at, is_update, photo_deletes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          [queueId, item!.id, JSON.stringify(data), '[]', 'pending', now, editMode && !!item!.submission ? 1 : 0, JSON.stringify(removedPhotoIds)]
         );
 
         for (const [fieldId, uris] of Object.entries(photos)) {
           for (const uri of uris) {
+            // Skip server URLs — they're already uploaded; only queue local files
+            const isLocal = !uri.startsWith('http://') && !uri.startsWith('https://');
+            if (!isLocal) continue;
             await db.runAsync(
               'INSERT INTO photos_queue (id, job_item_id, local_uri, field_id, status) VALUES (?, ?, ?, ?, ?)',
               [uuid(), item!.id, uri, fieldId || null, 'pending']
@@ -337,11 +345,19 @@ export default function FormSubmissionScreen() {
             <SubmissionViewMode
               schema={schema}
               submission={item.submission!}
-              canEdit={canEdit}
               onEdit={() => {
                 setValues(
                   Object.fromEntries(item.submission!.data.map((e) => [e.itemId, e.value]))
                 );
+                // Pre-populate existing photos so the worker can see and manage them
+                const photoMap: PhotoMap = {};
+                for (const photo of item.submission!.photos) {
+                  if (photo.fieldId) {
+                    photoMap[photo.fieldId] = [...(photoMap[photo.fieldId] ?? []), photo.url];
+                  }
+                }
+                setPhotos(photoMap);
+                setRemovedPhotoIds([]);
                 setEditMode(true);
               }}
               c={c}
@@ -443,13 +459,11 @@ export default function FormSubmissionScreen() {
 function SubmissionViewMode({
   schema,
   submission,
-  canEdit,
   onEdit,
   c,
 }: {
   schema: SchemaItem[];
   submission: Submission;
-  canEdit: boolean;
   onEdit: () => void;
   c: Colors;
 }) {
@@ -530,19 +544,13 @@ function SubmissionViewMode({
         </View>
       )}
 
-      {canEdit ? (
-        <TouchableOpacity
-          style={[viewStyles.editBtn, { borderColor: c.primary }]}
-          onPress={onEdit}
-          activeOpacity={0.8}
-        >
-          <Text style={[viewStyles.editBtnText, { color: c.primary }]}>Edit Submission</Text>
-        </TouchableOpacity>
-      ) : (
-        <Text style={[viewStyles.noEditText, { color: c.textMuted }]}>
-          You do not have permission to edit this submission.
-        </Text>
-      )}
+      <TouchableOpacity
+        style={[viewStyles.editBtn, { borderColor: c.primary }]}
+        onPress={onEdit}
+        activeOpacity={0.8}
+      >
+        <Text style={[viewStyles.editBtnText, { color: c.primary }]}>Edit Submission</Text>
+      </TouchableOpacity>
     </>
   );
 }

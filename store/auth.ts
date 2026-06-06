@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import * as SecureStore from 'expo-secure-store';
-import { User } from '@/lib/api';
+import { api, User } from '@/lib/api';
 
 interface AuthState {
   token: string | null;
@@ -9,6 +9,7 @@ interface AuthState {
   setAuth: (token: string, user: User) => Promise<void>;
   clearAuth: () => Promise<void>;
   loadFromStorage: () => Promise<void>;
+  refreshUser: () => Promise<void>;
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
@@ -39,6 +40,16 @@ export const useAuthStore = create<AuthState>((set) => ({
       }
     } catch {
       set({ isLoading: false });
+    }
+  },
+
+  refreshUser: async () => {
+    try {
+      const user = await api.getProfile();
+      await SecureStore.setItemAsync('auth_user', JSON.stringify(user));
+      set({ user });
+    } catch {
+      // Non-fatal — keep the cached user if the server is unreachable
     }
   },
 }));

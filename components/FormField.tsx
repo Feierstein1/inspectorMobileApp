@@ -177,6 +177,8 @@ export default function FormField({
           errorColor={c.danger}
           mutedColor={c.textMuted}
           surfaceAlt={c.surfaceAlt}
+          dangerColor={c.danger}
+          dangerBg={c.dangerBg}
         />
       )}
 
@@ -367,6 +369,8 @@ function PhotoField({
   errorColor,
   mutedColor,
   surfaceAlt,
+  dangerColor,
+  dangerBg,
 }: {
   localPhotos: string[];
   maxPhotos?: number;
@@ -377,16 +381,26 @@ function PhotoField({
   errorColor: string;
   mutedColor: string;
   surfaceAlt: string;
+  dangerColor: string;
+  dangerBg: string;
 }) {
   const canAdd = !maxPhotos || localPhotos.length < maxPhotos;
 
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.photoRow}>
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={styles.photoRow}
+    >
       {localPhotos.map((uri) => (
-        <View key={uri} style={styles.photoThumb}>
-          <Image source={{ uri }} style={styles.thumbImage} />
-          <TouchableOpacity style={styles.removePhoto} onPress={() => onRemovePhoto?.(uri)}>
-            <Text style={styles.removePhotoText}>✕</Text>
+        <View key={uri} style={[styles.photoCard, { borderColor }]}>
+          <Image source={{ uri }} style={styles.photoImage} />
+          <TouchableOpacity
+            style={[styles.removeBtn, { backgroundColor: dangerBg }]}
+            onPress={() => onRemovePhoto?.(uri)}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.removeBtnText, { color: dangerColor }]}>Remove</Text>
           </TouchableOpacity>
         </View>
       ))}
@@ -399,7 +413,7 @@ function PhotoField({
           onPress={onAddPhoto}
         >
           <Text style={[styles.addPhotoIcon, { color: mutedColor }]}>+</Text>
-          <Text style={[styles.addPhotoLabel, { color: mutedColor }]}>Photo</Text>
+          <Text style={[styles.addPhotoLabel, { color: mutedColor }]}>Add Photo</Text>
         </TouchableOpacity>
       )}
     </ScrollView>
@@ -463,30 +477,29 @@ const styles = StyleSheet.create({
   dropdownItemText: { fontSize: 16 },
 
   // Photos
-  photoRow: { flexDirection: 'row' },
-  photoThumb: { width: 80, height: 80, marginRight: 8, borderRadius: 8, overflow: 'hidden' },
-  thumbImage: { width: '100%', height: '100%' },
-  removePhoto: {
-    position: 'absolute',
-    top: 4,
-    right: 4,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+  photoRow: { flexDirection: 'row', gap: 10, paddingBottom: 2 },
+  photoCard: {
+    width: 100,
     borderRadius: 10,
-    width: 20,
-    height: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderWidth: 1,
+    overflow: 'hidden',
   },
-  removePhotoText: { color: '#fff', fontSize: 10, fontWeight: '700' },
+  photoImage: { width: '100%', height: 90 },
+  removeBtn: {
+    paddingVertical: 7,
+    alignItems: 'center',
+  },
+  removeBtnText: { fontSize: 12, fontWeight: '600' },
   addPhotoBtn: {
-    width: 80,
-    height: 80,
-    borderRadius: 8,
+    width: 100,
+    height: 120,
+    borderRadius: 10,
     borderWidth: 2,
     borderStyle: 'dashed',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 4,
   },
-  addPhotoIcon: { fontSize: 24 },
-  addPhotoLabel: { fontSize: 11 },
+  addPhotoIcon: { fontSize: 28 },
+  addPhotoLabel: { fontSize: 12, fontWeight: '500' },
 });

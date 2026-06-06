@@ -4,6 +4,7 @@ import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import NetInfo from '@react-native-community/netinfo';
 import { useAuthStore } from '@/store/auth';
+import { useAccountStore } from '@/store/account';
 import { useSyncStore } from '@/store/sync';
 import { useJobsStore } from '@/store/jobs';
 import { initDb } from '@/lib/db';
@@ -20,7 +21,8 @@ import { api } from '@/lib/api';
 import { useThemeStore, useIsDark } from '@/store/theme';
 
 export default function RootLayout() {
-  const { loadFromStorage, isLoading, token } = useAuthStore();
+  const { loadFromStorage, refreshUser, clearAuth, isLoading, token } = useAuthStore();
+  const { blockReason } = useAccountStore();
   const {
     setOnline,
     failedCount,
@@ -36,6 +38,13 @@ export default function RootLayout() {
   const { loadTheme } = useThemeStore();
   const isDark = useIsDark();
 
+  // Mid-session account block — sign out immediately so the login screen shows the reason
+  useEffect(() => {
+    if (blockReason && token) {
+      clearAuth();
+    }
+  }, [blockReason]);
+
   const prevFailedCount = useRef(0);
   const prevFailedPhotoCount = useRef(0);
   const prevForbiddenCount = useRef(0);
@@ -45,6 +54,7 @@ export default function RootLayout() {
       .then(async () => {
         await loadFromStorage();
         await loadTheme();
+        refreshUser().catch(() => {}); // Non-blocking — updates permissions silently
         await registerBackgroundSync();
         // Hydrate pending/failed state from SQLite on startup
         const [count, ids, failed, failedPhotos, forbidden] = await Promise.all([

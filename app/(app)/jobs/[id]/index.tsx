@@ -8,6 +8,7 @@ import {
   Alert,
   ActivityIndicator,
   Image,
+  RefreshControl,
 } from 'react-native';
 import { Stack, useLocalSearchParams, router } from 'expo-router';
 import { useJobsStore } from '@/store/jobs';
@@ -25,12 +26,13 @@ const TYPE_LABEL: Record<string, string> = {
 export default function JobDetailScreen() {
   const c = useColors();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { jobs } = useJobsStore();
+  const { jobs, persistJobs, markClientSigned } = useJobsStore();
   const job = jobs.find((j) => j.id === id);
 
   const [sigModalVisible, setSigModalVisible] = useState(false);
   const [sigLoading, setSigLoading] = useState(false);
   const [localSig, setLocalSig] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   if (!job) {
     return (
@@ -40,15 +42,25 @@ export default function JobDetailScreen() {
     );
   }
 
+  async function handleRefresh() {
+    setRefreshing(true);
+    try {
+      const fresh = await api.getJobs();
+      await persistJobs(fresh);
+    } catch {}
+    setRefreshing(false);
+  }
+
   async function handleClientSignature(imageData: string) {
     if (!job) return;
-    setLocalSig(imageData); // Show preview immediately
+    setLocalSig(imageData);
     setSigLoading(true);
     try {
-      await api.uploadClientSignature(job.id, imageData);
+      const result = await api.uploadClientSignature(job.id, imageData);
+      markClientSigned(job.id, result.url);
     } catch {
       Alert.alert('Error', 'Failed to save signature. Please try again.');
-      setLocalSig(null); // Revert preview on failure
+      setLocalSig(null);
     } finally {
       setSigLoading(false);
     }
@@ -68,6 +80,9 @@ export default function JobDetailScreen() {
       <ScrollView
         style={[styles.scroll, { backgroundColor: c.bg }]}
         contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} tintColor={c.textMuted} />
+        }
       >
         {/* Job info card */}
         <View style={[styles.card, { backgroundColor: c.surface, borderColor: c.border }]}>
@@ -101,8 +116,8 @@ export default function JobDetailScreen() {
           {job.notes && <InfoRow label="Notes" value={job.notes} c={c} />}
         </View>
 
-        {/* Client signature */}
-        {job.requireClientSignature && (
+        {/* Client signature — only surfaced once all items are COMPLETED */}
+        {job.requireClientSignature && job.status === 'COMPLETED' && (
           <View style={[styles.card, { backgroundColor: c.surface, borderColor: c.border }]}>
             <Text style={[styles.sectionTitle, { color: c.text }]}>Client Signature</Text>
 

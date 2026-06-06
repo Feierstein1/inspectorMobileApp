@@ -58,4 +58,12 @@ export async function initDb(): Promise<void> {
   } catch {
     // Column already exists on devices that ran a previous version
   }
+
+  try {
+    await db.execAsync(
+      "ALTER TABLE submissions_queue ADD COLUMN photo_deletes TEXT NOT NULL DEFAULT '[]'"
+    );
+  } catch {
+    // Column already exists
+  }
 }

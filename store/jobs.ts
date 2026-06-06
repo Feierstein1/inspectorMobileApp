@@ -12,6 +12,7 @@ interface JobsState {
   persistJobs: (jobs: Job[]) => Promise<void>;
   loadJobsFromDb: () => Promise<void>;
   markItemSubmitted: (jobId: string, itemId: string, data: JobItem['submission']) => void;
+  markClientSigned: (jobId: string, url: string) => void;
 }
 
 export const useJobsStore = create<JobsState>((set, get) => ({
@@ -83,10 +84,28 @@ export const useJobsStore = create<JobsState>((set, get) => ({
       )
     ).catch(() => {});
     Promise.all([getPendingCount(), getPendingItemIds()])
+
       .then(([count, ids]) => {
         useSyncStore.getState().setPendingCount(count);
         useSyncStore.getState().setPendingItemIds(ids);
       })
       .catch(() => {});
+  },
+
+  markClientSigned: (jobId, url) => {
+    const updatedJobs = get().jobs.map((job) => {
+      if (job.id !== jobId) return job;
+      return { ...job, clientSignatureUrl: url, clientReviewedAt: new Date().toISOString() };
+    });
+    set({ jobs: updatedJobs });
+    const db = getDb();
+    const now = Date.now();
+    Promise.all(
+      updatedJobs.map((job) =>
+        db.runAsync('INSERT OR REPLACE INTO jobs (id, data, synced_at) VALUES (?, ?, ?)', [
+          job.id, JSON.stringify(job), now,
+        ])
+      )
+    ).catch(() => {});
   },
 }));
