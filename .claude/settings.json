@@ -1,4 +1,11 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(node -e \"const p = require\\('./package.json'\\); console.log\\('expo version:', p.dependencies.expo\\)\")",
+      "Bash(node -e \"const p = require\\('./package.json'\\); console.log\\('expo-image-manipulator:', p.dependencies['expo-image-manipulator']\\)\")",
+      "Bash(node -e \"const m = require\\('expo-image-manipulator'\\); console.log\\(Object.keys\\(m\\)\\)\")"
+    ]
+  },
   "enabledPlugins": {
     "expo@claude-plugins-official": true
   }

@@ -84,7 +84,6 @@ export async function resetFailedSubmissions(): Promise<void> {
 
 export async function drainSyncQueue(): Promise<void> {
   const syncStore = useSyncStore.getState();
-  // Guard against concurrent invocations (NetInfo + manual sync + background fetch)
   if (syncStore.isSyncing) return;
 
   const {
@@ -94,13 +93,16 @@ export async function drainSyncQueue(): Promise<void> {
     setFailedCount,
     setFailedPhotoCount,
     setForbiddenCount,
+    setSyncProgress,
+    setLastSyncError,
   } = syncStore;
   setSyncing(true);
+  setLastSyncError(null);
 
   try {
     const db = getDb();
 
-    // ── 1. Submissions ───────────────────────────────────────────────────
+    // ── Fetch all queues upfront so progress totals are accurate ─────────
     const pendingSubmissions = await db.getAllAsync<{
       id: string;
       job_item_id: string;
@@ -110,7 +112,44 @@ export async function drainSyncQueue(): Promise<void> {
       photo_deletes: string;
     }>("SELECT * FROM submissions_queue WHERE status = 'pending' AND attempts < 3");
 
+    const pendingPhotos = await db.getAllAsync<{
+      id: string;
+      submission_id: string;
+      job_item_id: string;
+      local_uri: string;
+      field_id: string | null;
+      attempts: number;
+    }>(
+      "SELECT * FROM photos_queue WHERE status = 'pending' AND submission_id IS NOT NULL AND attempts < 3"
+    );
+
+    const pendingSigs = await db.getAllAsync<{
+      id: string;
+      job_item_id: string;
+      image_data: string;
+      attempts: number;
+    }>(
+      "SELECT * FROM worker_signatures_queue WHERE status = 'pending' AND submission_id IS NOT NULL AND attempts < 3"
+    );
+
+    // Photos without a submission_id can't upload yet — count them in total so
+    // the worker knows they're queued even if no progress is shown for them this cycle.
+    const waitingPhotos = await db.getFirstAsync<{ count: number }>(
+      "SELECT COUNT(*) as count FROM photos_queue WHERE status = 'pending' AND submission_id IS NULL"
+    );
+
+    const total =
+      pendingSubmissions.length +
+      pendingPhotos.length +
+      pendingSigs.length +
+      (waitingPhotos?.count ?? 0);
+    let current = 0;
+
+    // ── 1. Submissions ───────────────────────────────────────────────────
     for (const row of pendingSubmissions) {
+      current++;
+      setSyncProgress({ current, total, label: `Syncing form ${current} of ${pendingSubmissions.length}…` });
+
       try {
         const data: SubmissionEntry[] = JSON.parse(row.data);
         const deletedPhotoIds: string[] = JSON.parse(row.photo_deletes || '[]');
@@ -124,11 +163,7 @@ export async function drainSyncQueue(): Promise<void> {
           } catch (postErr: unknown) {
             const msg = postErr instanceof Error ? postErr.message : '';
             if (msg.startsWith('HTTP_409')) {
-              // Server already has a submission for this item — treat as an update
-              await db.runAsync(
-                'UPDATE submissions_queue SET is_update = 1 WHERE id = ?',
-                [row.id]
-              );
+              await db.runAsync('UPDATE submissions_queue SET is_update = 1 WHERE id = ?', [row.id]);
               result = await api.updateSubmission(row.job_item_id, data);
             } else {
               throw postErr;
@@ -137,7 +172,7 @@ export async function drainSyncQueue(): Promise<void> {
         }
 
         await db.runAsync(
-          "UPDATE submissions_queue SET status = 'synced' WHERE id = ?",
+          "UPDATE submissions_queue SET status = 'synced', last_error = NULL WHERE id = ?",
           [row.id]
         );
         await db.runAsync(
@@ -149,70 +184,73 @@ export async function drainSyncQueue(): Promise<void> {
           [result.id, row.job_item_id]
         );
       } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : '';
+        const msg = err instanceof Error ? err.message : 'Unknown error';
         const is403 = msg.startsWith('HTTP_403');
         const fatal = is403 || isFatalSyncError(err);
         const newStatus = is403 ? 'forbidden' : fatal ? 'failed' : 'pending';
+        const friendlyError = humaniseError(msg, 'form data');
         await db.runAsync(
-          "UPDATE submissions_queue SET attempts = attempts + 1, status = ? WHERE id = ?",
-          [newStatus, row.id]
+          "UPDATE submissions_queue SET attempts = attempts + 1, status = ?, last_error = ? WHERE id = ?",
+          [newStatus, friendlyError, row.id]
         );
+        if (fatal) setLastSyncError(friendlyError);
       }
     }
 
     // ── 2. Photos ────────────────────────────────────────────────────────
-    const pendingPhotos = await db.getAllAsync<{
-      id: string;
-      submission_id: string;
-      job_item_id: string;
-      local_uri: string;
-      field_id: string | null;
-      attempts: number;
-    }>(
-      "SELECT * FROM photos_queue WHERE status = 'pending' AND submission_id IS NOT NULL AND attempts < 3"
-    );
+    // Re-query so newly-unlocked photos (submission_id just set above) are included
+    const photosThisCycle = pendingPhotos.length > 0
+      ? pendingPhotos
+      : await db.getAllAsync<{
+          id: string; submission_id: string; job_item_id: string;
+          local_uri: string; field_id: string | null; attempts: number;
+        }>(
+          "SELECT * FROM photos_queue WHERE status = 'pending' AND submission_id IS NOT NULL AND attempts < 3"
+        );
 
-    for (const row of pendingPhotos) {
+    for (const row of photosThisCycle) {
+      current++;
+      setSyncProgress({ current, total, label: `Uploading photo ${current - pendingSubmissions.length} of ${photosThisCycle.length}…` });
+
       try {
         await api.uploadPhoto(row.job_item_id, row.local_uri, row.field_id ?? undefined);
         await db.runAsync(
-          "UPDATE photos_queue SET status = 'synced' WHERE id = ?",
+          "UPDATE photos_queue SET status = 'synced', last_error = NULL WHERE id = ?",
           [row.id]
         );
         await deleteAsync(row.local_uri, { idempotent: true });
       } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Unknown error';
         const fatal = isFatalSyncError(err);
+        const friendlyError = humaniseError(msg, 'photo');
         await db.runAsync(
-          "UPDATE photos_queue SET attempts = attempts + 1, status = ? WHERE id = ?",
-          [fatal ? 'failed' : 'pending', row.id]
+          "UPDATE photos_queue SET attempts = attempts + 1, status = ?, last_error = ? WHERE id = ?",
+          [fatal ? 'failed' : 'pending', friendlyError, row.id]
         );
+        if (fatal) setLastSyncError(friendlyError);
       }
     }
 
     // ── 3. Worker signatures ─────────────────────────────────────────────
-    // Runs after submissions so the server-side submission record exists (avoids 409).
-    const pendingSigs = await db.getAllAsync<{
-      id: string;
-      job_item_id: string;
-      image_data: string;
-      attempts: number;
-    }>(
-      "SELECT * FROM worker_signatures_queue WHERE status = 'pending' AND submission_id IS NOT NULL AND attempts < 3"
-    );
-
     for (const row of pendingSigs) {
+      current++;
+      setSyncProgress({ current, total, label: 'Uploading signature…' });
+
       try {
         await api.uploadWorkerSignature(row.job_item_id, row.image_data);
         await db.runAsync(
-          "UPDATE worker_signatures_queue SET status = 'synced' WHERE id = ?",
+          "UPDATE worker_signatures_queue SET status = 'synced', last_error = NULL WHERE id = ?",
           [row.id]
         );
       } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Unknown error';
         const fatal = isFatalSyncError(err);
+        const friendlyError = humaniseError(msg, 'signature');
         await db.runAsync(
-          "UPDATE worker_signatures_queue SET attempts = attempts + 1, status = ? WHERE id = ?",
-          [fatal ? 'failed' : 'pending', row.id]
+          "UPDATE worker_signatures_queue SET attempts = attempts + 1, status = ?, last_error = ? WHERE id = ?",
+          [fatal ? 'failed' : 'pending', friendlyError, row.id]
         );
+        if (fatal) setLastSyncError(friendlyError);
       }
     }
 
@@ -229,6 +267,20 @@ export async function drainSyncQueue(): Promise<void> {
     setFailedPhotoCount(failedPhotos);
     setForbiddenCount(forbidden);
   } finally {
+    setSyncProgress(null);
     useSyncStore.getState().setSyncing(false);
   }
+}
+
+function humaniseError(raw: string, context: string): string {
+  if (raw === 'TIMEOUT') return `Upload timed out (${context}) — will retry on reconnect`;
+  if (raw === 'UNAUTHORIZED') return 'Session expired — please sign in again';
+  if (raw === 'SUBSCRIPTION_EXPIRED') return 'Subscription expired — contact your administrator';
+  if (raw === 'ACCOUNT_FROZEN') return 'Account suspended — contact your administrator';
+  const code = parseInt(raw.split(':')[0].replace('HTTP_', ''));
+  if (code === 413) return `File too large to upload (${context})`;
+  if (code === 422) return `Invalid ${context} data — please re-submit the form`;
+  if (code === 500) return `Server error uploading ${context} — will retry`;
+  if (!isNaN(code)) return `Server rejected ${context} (error ${code})`;
+  return `Network error uploading ${context} — will retry when online`;
 }

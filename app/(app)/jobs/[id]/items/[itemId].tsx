@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { Stack, useLocalSearchParams, router } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { cacheDirectory, copyAsync } from 'expo-file-system/legacy';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useJobsStore } from '@/store/jobs';
@@ -124,7 +125,7 @@ export default function FormSubmissionScreen() {
     try {
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.8,
+        quality: 1,
         allowsEditing: false,
       });
       await savePickedPhoto(fieldId, result);
@@ -142,7 +143,7 @@ export default function FormSubmissionScreen() {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        quality: 0.8,
+        quality: 1,
         allowsEditing: false,
       });
       await savePickedPhoto(fieldId, result);
@@ -154,8 +155,22 @@ export default function FormSubmissionScreen() {
   async function savePickedPhoto(fieldId: string, result: ImagePicker.ImagePickerResult) {
     if (result.canceled || !result.assets[0]) return;
     const asset = result.assets[0];
+
+    // Resize to max 1920px on the long edge — single compression pass at 0.8 quality.
+    // Keeps inspection photos sharp and print-ready while cutting file size ~85%.
+    const MAX_EDGE = 1920;
+    const longEdge = Math.max(asset.width ?? 0, asset.height ?? 0);
+    const resizeAction =
+      longEdge > MAX_EDGE
+        ? [{ resize: (asset.width ?? 0) >= (asset.height ?? 0) ? { width: MAX_EDGE } : { height: MAX_EDGE } }]
+        : [];
+    const manipulated = await manipulateAsync(asset.uri, resizeAction, {
+      compress: 0.8,
+      format: SaveFormat.JPEG,
+    });
+
     const dest = `${cacheDirectory}${uuid()}.jpg`;
-    await copyAsync({ from: asset.uri, to: dest });
+    await copyAsync({ from: manipulated.uri, to: dest });
     setPhotos((prev) => ({
       ...prev,
       [fieldId]: [...(prev[fieldId] ?? []), dest],

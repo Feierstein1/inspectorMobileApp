@@ -121,18 +121,39 @@ export default function RootLayout() {
   }, [token]);
 
   useEffect(() => {
+    const debounceTimer = { current: null as ReturnType<typeof setTimeout> | null };
+
     const unsub = NetInfo.addEventListener((state) => {
       const online = !!state.isConnected && state.isInternetReachable !== false;
       setOnline(online);
-      // drainSyncQueue guards itself against concurrent runs; no extra check needed here
-      if (online && token) {
-        drainSyncQueue()
-          .then(() => api.getJobs())
-          .then((jobs) => persistJobs(jobs))
-          .catch(() => {});
+
+      if (!online || !token) {
+        if (debounceTimer.current) clearTimeout(debounceTimer.current);
+        return;
       }
+
+      // Debounce 2.5s — mobile signals fluctuate; wait for a stable connection
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+      debounceTimer.current = setTimeout(() => {
+        getPendingCount().then((count) => {
+          if (count > 0) {
+            // Items waiting — drain first, then refresh
+            drainSyncQueue()
+              .then(() => api.getJobs())
+              .then((jobs) => persistJobs(jobs))
+              .catch(() => {});
+          } else {
+            // Nothing to drain — just refresh job list
+            api.getJobs().then((jobs) => persistJobs(jobs)).catch(() => {});
+          }
+        }).catch(() => {});
+      }, 2500);
     });
-    return unsub;
+
+    return () => {
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+      unsub();
+    };
   }, [token]);
 
   useEffect(() => {

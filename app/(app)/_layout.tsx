@@ -1,6 +1,6 @@
 import { Stack } from 'expo-router';
 import { View } from 'react-native';
-import OfflineBanner from '@/components/OfflineBanner';
+import SyncStatusBar from '@/components/SyncStatusBar';
 import { useColors } from '@/store/theme';
 
 export default function AppLayout() {
@@ -8,7 +8,7 @@ export default function AppLayout() {
 
   return (
     <View style={{ flex: 1 }}>
-      <OfflineBanner />
+      <SyncStatusBar />
       <Stack
         screenOptions={{
           headerStyle: { backgroundColor: c.header },

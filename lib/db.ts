@@ -63,7 +63,17 @@ export async function initDb(): Promise<void> {
     await db.execAsync(
       "ALTER TABLE submissions_queue ADD COLUMN photo_deletes TEXT NOT NULL DEFAULT '[]'"
     );
-  } catch {
-    // Column already exists
-  }
+  } catch {}
+
+  try {
+    await db.execAsync('ALTER TABLE submissions_queue ADD COLUMN last_error TEXT');
+  } catch {}
+
+  try {
+    await db.execAsync('ALTER TABLE photos_queue ADD COLUMN last_error TEXT');
+  } catch {}
+
+  try {
+    await db.execAsync('ALTER TABLE worker_signatures_queue ADD COLUMN last_error TEXT');
+  } catch {}
 }

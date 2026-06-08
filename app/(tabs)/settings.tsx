@@ -23,7 +23,7 @@ export default function SettingsScreen() {
   const c = useColors();
   const { user, clearAuth, refreshUser } = useAuthStore();
   const { mode, setMode } = useThemeStore();
-  const { pendingCount, failedCount, failedPhotoCount, forbiddenCount, isSyncing } = useSyncStore();
+  const { pendingCount, failedCount, failedPhotoCount, forbiddenCount, isSyncing, lastSyncError, setLastSyncError } = useSyncStore();
   const { persistJobs, lastSyncAt } = useJobsStore();
 
   const [syncing, setSyncing] = useState(false);
@@ -125,6 +125,17 @@ export default function SettingsScreen() {
             <TouchableOpacity onPress={() => clearForbiddenSubmissions()}>
               <Text style={[styles.rowVal, { color: c.danger }]}>
                 {forbiddenCount} blocked · Clear
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {lastSyncError && (
+          <View style={[styles.row, { borderBottomColor: c.border }]}>
+            <Text style={[styles.rowKey, { color: c.textSecondary }]}>Last sync error</Text>
+            <TouchableOpacity onPress={() => setLastSyncError(null)} style={{ flex: 2 }}>
+              <Text style={[styles.rowVal, { color: c.danger }]} numberOfLines={2}>
+                {lastSyncError} · Tap to clear
               </Text>
             </TouchableOpacity>
           </View>
